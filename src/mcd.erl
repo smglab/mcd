@@ -84,6 +84,7 @@
 -export([do/2, do/3, do/4]).
 -export([ldo/1, ldo/2, ldo/3, ldo/5]).	%% do('localmcd', ...)
 -export([get/1, get/2, set/2, set/3, set/5, async_set/3, async_set/5]).
+-export([get_no_hash/1, get_no_hash/2, set_no_hash/2, set_no_hash/3, set_no_hash/5]).
 -export([monitor/3]).
 
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
@@ -156,9 +157,16 @@ ldo(set, Key, Data, Flag, Expires) ->
 get(Key) -> do(?LOCALMCDNAME, get, Key).
 get(ServerRef, Key) -> do(ServerRef, get, Key).
 
+get_no_hash(Key) -> do(?LOCALMCDNAME, get_no_hash, Key).
+get_no_hash(ServerRef, Key) -> do(ServerRef, get_no_hash, Key).
+
 set(Key, Data) -> do(?LOCALMCDNAME, set, Key, Data).
 set(ServerRef, Key, Data) -> do(ServerRef, set, Key, Data).
 set(ServerRef, Key, Data, Flags, Expiration) when is_integer(Flags), is_integer(Expiration), Flags >= 0, Flags < 65536, Expiration >= 0 -> do(ServerRef, {set, Flags, Expiration}, Key, Data).
+
+set_no_hash(Key, Data) -> do(?LOCALMCDNAME, set_no_hash, Key, Data).
+set_no_hash(ServerRef, Key, Data) -> do(ServerRef, set_no_hash, Key, Data).
+set_no_hash(ServerRef, Key, Data, Flags, Expiration) when is_integer(Flags), is_integer(Expiration), Flags >= 0, Flags < 65536, Expiration >= 0 -> do(ServerRef, {set_no_hash, Flags, Expiration}, Key, Data).
 
 async_set(ServerRef, Key, Data) ->
 	do_forwarder(cast, ServerRef, {set, Key, Data}),
@@ -502,6 +510,10 @@ constructMemcachedQuery({set, Key, Data}) ->
 	constructMemcachedQueryCmd("set", Key, Data);
 constructMemcachedQuery({set, Key, Data, Flags, Expiration}) ->
 	constructMemcachedQueryCmd("set", Key, Data, Flags, Expiration);
+constructMemcachedQuery({set_no_hash, Key, Data}) ->
+	constructMemcachedQueryCmdNoHash("set", Key, Data);
+constructMemcachedQuery({set_no_hash, Key, Data, Flags, Expiration}) ->
+	constructMemcachedQueryCmdNoHash("set", Key, Data, Flags, Expiration);
 constructMemcachedQuery({add, Key, Data}) ->
 	constructMemcachedQueryCmd("add", Key, Data);
 constructMemcachedQuery({add, Key, Data, Flags, Expiration}) ->
@@ -513,12 +525,18 @@ constructMemcachedQuery({replace, Key, Data, Flags, Expiration}) ->
 constructMemcachedQuery({get, Key}) ->
 	MD5Key = md5(Key),
 	{MD5Key, ["get ", b64(MD5Key), "\r\n"], rtGet};
+constructMemcachedQuery({get_no_hash, Key}) ->
+	AKey = atom_to_list(Key),
+	{Key, ["get ", AKey, "\r\n"], rtGet};
 constructMemcachedQuery({delete, Key, Time}) when is_integer(Time), Time > 0 ->
 	MD5Key = md5(Key),
 	{MD5Key, ["delete ", b64(MD5Key), " ", integer_to_list(Time), "\r\n"], rtDel};
 constructMemcachedQuery({delete, Key}) ->
 	MD5Key = md5(Key),
 	{MD5Key, ["delete ", b64(MD5Key), "\r\n"], rtDel};
+constructMemcachedQuery({delete_no_hash, Key}) ->
+	AKey = atom_to_list(Key),
+	{Key, ["delete ", AKey, "\r\n"], rtDel};
 constructMemcachedQuery({incr, Key, Value})
 		when is_integer(Value), Value >= 0 ->
 	MD5Key = md5(Key),
@@ -548,6 +566,18 @@ constructMemcachedQueryCmd(Cmd, Key, Data, Flags, Exptime)
 	BinData = term_to_binary(Data),
 	MD5Key = md5(Key),
 	{MD5Key, [Cmd, " ", b64(MD5Key), " ", integer_to_list(Flags), " ",
+		integer_to_list(Exptime), " ",
+		integer_to_list(size(BinData)),
+		"\r\n", BinData, "\r\n"], rtCmd}.
+
+constructMemcachedQueryCmdNoHash(Cmd, Key, Data) ->
+	constructMemcachedQueryCmdNoHash(Cmd, Key, Data, 0, 0).
+constructMemcachedQueryCmdNoHash(Cmd, Key, Data, Flags, Exptime)
+	when is_list(Cmd), is_integer(Flags), is_integer(Exptime),
+	Flags >= 0, Flags < 65536, Exptime >= 0 ->
+	BinData = term_to_binary(Data),
+	MD5Key = atom_to_list(Key),
+	{MD5Key, [Cmd, " ", MD5Key, " ", integer_to_list(Flags), " ",
 		integer_to_list(Exptime), " ",
 		integer_to_list(size(BinData)),
 		"\r\n", BinData, "\r\n"], rtCmd}.
